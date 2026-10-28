@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>غسيل الشبكات</title>
+<meta name="theme-color" content="#0E4B5A">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="غسيل الشبكات">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<style>
+  :root { --brand:#0E4B5A; --ink:#10242a; --bg:#f2f6f7; --ok:#1f7a4d; }
+  html, body { margin:0; height:100%; background:var(--brand); overflow:hidden;
+    font-family: system-ui, -apple-system, "Segoe UI", Tahoma, sans-serif; }
+  #app { position:fixed; inset:0; top:env(safe-area-inset-top); width:100%; height:calc(100% - env(safe-area-inset-top));
+    border:0; background:var(--bg); }
+  #splash { position:fixed; inset:0; display:grid; place-items:center; background:var(--brand); color:#fff;
+    transition:opacity .3s; z-index:5; }
+  #splash div { display:grid; gap:14px; justify-items:center; font-size:17px; }
+  #splash img { width:84px; height:84px; border-radius:20px; }
+  #splash.gone { opacity:0; pointer-events:none; }
+  .bar { position:fixed; left:12px; right:12px; bottom:calc(12px + env(safe-area-inset-bottom)); z-index:10;
+    background:#fff; color:var(--ink); border-radius:14px; box-shadow:0 8px 30px rgba(0,0,0,.25);
+    padding:12px 14px; display:flex; gap:10px; align-items:center; font-size:14px; line-height:1.5; }
+  .bar[hidden] { display:none; }
+  .bar p { margin:0; flex:1; }
+  .bar button { font:inherit; border:0; border-radius:10px; padding:9px 14px; cursor:pointer; white-space:nowrap; }
+  .bar .go { background:var(--brand); color:#fff; font-weight:600; }
+  .bar .x { background:transparent; color:#5b6b70; padding:6px 8px; font-size:18px; }
+</style>
+</head>
+<body>
+<div id="splash"><div><img src="icon-192.png" alt=""><span>جاري فتح النظام…</span></div></div>
+<iframe id="app" title="أعمال غسيل شبكات الصرف الصحي" allow="geolocation; camera; microphone; clipboard-read; clipboard-write; fullscreen"></iframe>
+
+<div class="bar" id="barPush" hidden>
+  <p>🔔 فعّل الإشعارات عشان توصلك الطلبات الجديدة أول بأول</p>
+  <button class="go" id="btnPush" type="button">تفعيل</button>
+  <button class="x" type="button" data-close="barPush" aria-label="إغلاق">✕</button>
+</div>
+<div class="bar" id="barInstall" hidden>
+  <p id="installTxt"></p>
+  <button class="go" id="btnInstall" type="button" hidden>تثبيت</button>
+  <button class="x" type="button" data-close="barInstall" aria-label="إغلاق">✕</button>
+</div>
+
+<script src="config.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-messaging-compat.js"></script>
+<script>
+(function () {
+  "use strict";
+  var CFG = self.SEWER_APP || {};
+  var $ = function (id) { return document.getElementById(id); };
+  var ua = navigator.userAgent || "";
+  var isIOS = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  var standalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  var pushReady = !!(CFG.firebase && CFG.firebase.apiKey && CFG.vapidKey);
+  var canPush = "serviceWorker" in navigator && "Notification" in window && "PushManager" in window;
+  var appWin = null, appOrigin = "", loggedIn = false, swReg = null, messaging = null, sentToken = "";
+
+  function hide(id, remember) { $(id).hidden = true; if (remember) try { localStorage.setItem("hide_" + id, String(Date.now())); } catch (e) {} }
+  function snoozed(id) { try { return Date.now() - Number(localStorage.getItem("hide_" + id) || 0) < 3 * 86400000; } catch (e) { return false; } }
+  document.querySelectorAll("[data-close]").forEach(function (b) { b.onclick = function () { hide(b.getAttribute("data-close"), true); }; });
+
+  /* فتح النظام داخل التطبيق */
+  var frame = $("app");
+  frame.addEventListener("load", function () { setTimeout(function () { $("splash").classList.add("gone"); }, 400); });
+  setTimeout(function () { $("splash").classList.add("gone"); }, 8000);
+  frame.src = CFG.appUrl;
+
+  /* شريط التثبيت */
+  var deferred = null;
+  window.addEventListener("beforeinstallprompt", function (e) {
+    e.preventDefault(); deferred = e;
+    if (standalone || snoozed("barInstall")) return;
+    $("installTxt").textContent = "ثبّت التطبيق على جوالك عشان يفتح من أيقونة وتوصلك الإشعارات";
+    $("btnInstall").hidden = false; $("barInstall").hidden = false;
+  });
+  $("btnInstall").onclick = function () { if (!deferred) return; deferred.prompt(); deferred = null; hide("barInstall"); };
+  if (isIOS && !standalone && !snoozed("barInstall")) {
+    $("installTxt").textContent = "عشان توصلك الإشعارات على الآيفون: اضغط زر المشاركة ⬆️ تحت، ثم «إضافة إلى الشاشة الرئيسية»، وافتح التطبيق من الأيقونة الجديدة";
+    $("barInstall").hidden = false;
+  }
+
+  /* الإشعارات */
+  function deviceName() {
+    var os = isIOS ? "iPhone" : /Android/.test(ua) ? "Android" : /Windows/.test(ua) ? "Windows" : /Mac/.test(ua) ? "Mac" : "جهاز";
+    return os + (standalone ? " · تطبيق" : " · متصفح");
+  }
+  function initPush() {
+    if (!pushReady || !canPush) return Promise.resolve(false);
+    if (swReg) return Promise.resolve(true);
+    return navigator.serviceWorker.register("sw.js").then(function (reg) {
+      swReg = reg;
+      firebase.initializeApp(CFG.firebase);
+      messaging = firebase.messaging();
+      /* إشعار وصل والتطبيق مفتوح قدامه: نعرضه ونحدّث الصفحة */
+      messaging.onMessage(function (p) {
+        var n = p.notification || {}, d = p.data || {};
+        swReg.showNotification(n.title || d.title || "إشعار جديد", { body: n.body || d.body || "", icon: "icon-192.png", badge: "badge-72.png",
+          dir: "rtl", lang: "ar", data: { sewer: true, url: location.href } });
+        ping();
+      });
+      return true;
+    }).catch(function () { return false; });
+  }
+  function sendToken() {
+    if (!loggedIn || !appWin || Notification.permission !== "granted") return;
+    initPush().then(function (ok) {
+      if (!ok) return;
+      return navigator.serviceWorker.ready.then(function () {
+        return messaging.getToken({ vapidKey: CFG.vapidKey, serviceWorkerRegistration: swReg });
+      }).then(function (tok) {
+        if (!tok || !appWin) return;
+        appWin.postMessage({ t: "sewer-token", token: tok, device: deviceName() }, appOrigin);
+        sentToken = tok;
+      });
+    }).catch(function () {});
+  }
+  function refreshPushBar() {
+    var need = loggedIn && pushReady && canPush && Notification.permission === "default";
+    $("barPush").hidden = !need || snoozed("barPush") || !$("barInstall").hidden;
+  }
+  $("btnPush").onclick = function () {
+    hide("barPush");
+    /* الآيفون يشترط طلب الإذن مباشرة من ضغطة الزر */
+    Promise.resolve(Notification.requestPermission()).then(function (p) {
+      if (p === "granted") sendToken();
+    }).catch(function () {});
+  };
+  function ping() { if (appWin) try { appWin.postMessage({ t: "sewer-ping" }, appOrigin); } catch (e) {} }
+
+  /* الرسائل من النظام (Apps Script) */
+  window.addEventListener("message", function (e) {
+    if (!/^https:\/\/[a-z0-9-]+\.googleusercontent\.com$/.test(e.origin)) return;
+    var d = e.data || {};
+    if (d.t !== "sewer-state") return;
+    appWin = e.source; appOrigin = e.origin;
+    loggedIn = !!d["in"];
+    if (!loggedIn) sentToken = "";
+    refreshPushBar();
+    sendToken();
+  });
+  document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible") ping(); });
+  if (pushReady && canPush && Notification.permission === "granted") initPush();
+})();
+</script>
+</body>
+</html>
